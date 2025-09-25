@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# VSCode
+.vscode/
+!.vscode/settings.json
+
+# PlatformIO
+.pio/
+.ccls-cache/
+.clangd/
+CMakeLists.txt     # (si PIO lo genera)
+cmake-build-*/
+
+# Arduino caches (por si acaso)
+*.elf
+*.bin
+*.hex
+
+# Node (si tienes scripts)
+node_modules/
+dist/
+
+# Secretos
+include/secrets.h
+*.env
+
