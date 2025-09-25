@@ -1,51 +1,146 @@
-# ESP32 RFID Enroll Project
+# ESP32 RFID Enroll
 
-This project allows you to enroll RFID cards using an ESP32 microcontroller. It connects to a Wi-Fi network and serves a web page where you can manage enrolled RFID cards. The project also provides visual feedback through LEDs, indicating whether a card is enabled or disabled.
+Firmware para **ESP32 + RC522** que permite enrolar, gestionar y validar tarjetas RFID.  
+Incluye un **servidor web embebido** con interfaz básica y una **API REST** para integrarse con aplicaciones externas (.NET, web, mobile, etc.).
 
-## Features
+---
 
-- Connects to a specified Wi-Fi network.
-- Serves a web page for enrolling RFID cards.
-- Displays a list of enrolled RFID numbers.
-- Green LED indicates an enabled card.
-- Red LED indicates a disabled card.
+## 📡 Conexión
 
-## Project Structure
+- **Protocolo:** HTTP (LAN)
+- **Puerto:** 80
+- **Base URL:** `http://<IP_DEL_ESP32>` (ej: `http://192.168.0.23`)  
+  > Si tenés mDNS habilitado: `http://esp32.local`
+- **Formato:** JSON
+- **Auth mínima:** Header `X-PIN: <pin>` en operaciones sensibles (enrolar/borrar).
 
-```
-esp32-rfid-enroll
-├── src
-│   ├── main.cpp         # Entry point of the application
-│   ├── wifi.cpp         # Wi-Fi connection logic
-│   ├── webserver.cpp     # Web server functionality
-│   ├── rfid.cpp         # RFID reading and enrollment
-│   ├── led.cpp          # LED control logic
-│   └── cards.cpp        # Management of enrolled RFID cards
-├── include
-│   ├── wifi.h           # Wi-Fi connectivity declarations
-│   ├── webserver.h      # Web server declarations
-│   ├── rfid.h           # RFID operations declarations
-│   ├── led.h            # LED control declarations
-│   └── cards.h          # Enrolled cards management declarations
-├── platformio.ini       # PlatformIO configuration file
-└── README.md            # Project documentation
-```
+---
 
-## Setup Instructions
+## 🔑 API REST
 
-1. Clone the repository or download the project files.
-2. Open the project in your preferred IDE.
-3. Configure the `platformio.ini` file with your ESP32 board settings.
-4. Update the Wi-Fi credentials in the `wifi.cpp` file.
-5. Upload the code to your ESP32 board.
-6. Connect to the ESP32's IP address using a web browser to access the enrollment page.
+### Estado del dispositivo
+**GET** `/api/status`  
+```json
+{
+  "ip": "192.168.0.23",
+  "armed": { "enroll": true, "delete": false },
+  "cardsCount": 12
+}
 
-## Usage
 
-- Once the ESP32 is connected to Wi-Fi, navigate to the provided IP address in your web browser.
-- Use the web interface to enroll new RFID cards.
-- The green LED will light up for enabled cards, while the red LED will indicate disabled cards.
+Listar tarjetas
+GET /api/cards
+[
+  { "uid": "DEADBEEF", "name": "Juan" },
+  { "uid": "33364BAC", "name": "Visita" }
+]
 
-## License
 
-This project is open-source and available for modification and distribution under the MIT License.
+
+Armar ENROLL (próxima tarjeta se registra)
+POST /api/arm-enroll
+Headers: X-PIN: 1234
+Body:
+{ "name": "Juan" }
+Respuesta:
+{ "ok": true, "msg": "ENROLL armed" }
+
+Armar DELETE (próxima tarjeta se da de baja)
+POST /api/arm-delete
+Headers: X-PIN: 1234
+Body: (vacío)
+{ "ok": true, "msg": "DELETE armed" }
+Borrar tarjeta por UID
+POST /api/delete
+Headers: X-PIN: 1234
+Body:
+{ "uid": "DEADBEEF" }
+Respuesta OK:
+{ "ok": true }
+Respuesta error:
+{ "ok": false, "error": "not_found" }
+Chequear acceso de un UID
+POST /api/check
+Body:
+{ "uid": "DEADBEEF" }
+Respuesta:
+{ "uid": "DEADBEEF", "access": true, "name": "Juan" }
+o
+{ "uid": "33364BAC", "access": false }
+Forzar reporte de próxima tarjeta (modo test)
+POST /api/send
+Body: (vacío)
+{ "ok": true }
+⚠️ Códigos de error
+200 OK → operación exitosa.
+400 Bad Request → JSON inválido o campos faltantes.
+403 Forbidden → PIN inválido o ausente.
+404 Not Found → UID inexistente.
+500 Internal Server Error → error inesperado.
+📱 Ejemplos de uso
+cURL
+# Estado
+curl http://esp32.local/api/status
+
+# Listar
+curl http://esp32.local/api/cards
+
+# Enrolar próxima tarjeta
+curl -X POST http://esp32.local/api/arm-enroll \
+  -H "Content-Type: application/json" -H "X-PIN: 1234" \
+  -d '{"name":"Juan"}'
+
+# Dar de baja próxima tarjeta
+curl -X POST http://esp32.local/api/arm-delete -H "X-PIN: 1234"
+
+# Borrar tarjeta por UID
+curl -X POST http://esp32.local/api/delete \
+  -H "Content-Type: application/json" -H "X-PIN: 1234" \
+  -d '{"uid":"DEADBEEF"}'
+
+# Chequear acceso
+curl -X POST http://esp32.local/api/check \
+  -H "Content-Type: application/json" \
+  -d '{"uid":"33364BAC"}'
+Cliente .NET (HttpClient)
+Ejemplo con HttpClient en .NET 6+:
+using System.Net.Http.Json;
+
+// Inicializar cliente
+var http = new HttpClient { BaseAddress = new Uri("http://esp32.local/") };
+
+// Estado
+var status = await http.GetFromJsonAsync<EspStatus>("api/status");
+Console.WriteLine($"IP={status.Ip} Cards={status.CardsCount}");
+
+// Enrolar próxima tarjeta
+var req = new HttpRequestMessage(HttpMethod.Post, "api/arm-enroll") {
+    Content = JsonContent.Create(new { name = "Juan" })
+};
+req.Headers.Add("X-PIN", "1234");
+var res = await http.SendAsync(req);
+Console.WriteLine(await res.Content.ReadAsStringAsync());
+DTO sugeridos:
+public sealed class EspStatus {
+    public string Ip { get; set; } = "";
+    public ArmedState Armed { get; set; } = new();
+    public int CardsCount { get; set; }
+    public sealed class ArmedState {
+        public bool Enroll { get; set; }
+        public bool Delete { get; set; }
+    }
+}
+
+public sealed class CardDto {
+    public string Uid { get; set; } = "";
+    public string Name { get; set; } = "";
+}
+🛠️ Recomendaciones
+Siempre enviar UID en HEX mayúscula (ej: "DEADBEEF").
+Configurar timeout corto (2–5s) en la app cliente.
+Usar X-PIN solo en redes seguras (LAN).
+Tras usar arm-enroll o arm-delete, la acción se consume con la próxima tarjeta y se desarma automáticamente.
+🚀 Futuro
+WebSocket API para eventos en tiempo real ({"type":"card","uid":"..."}).
+Export/Import CSV de tarjetas.
+Autenticación fuerte (token o Basic Auth) para accesos remotos.

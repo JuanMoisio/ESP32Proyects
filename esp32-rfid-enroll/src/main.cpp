@@ -4,6 +4,7 @@
 #include "my_webserver.h"
 #include "card_store.h"
 #include "secrets.h"
+#include "serial_control.h"
 #include <WiFi.h>
 
 // Pines RC522 (ajusta si usás otros)
@@ -36,6 +37,8 @@ void setup() {
   digitalWrite(LED_VERDE, LOW);
   digitalWrite(LED_ROJO, LOW);
   digitalWrite(BUZZER, LOW);
+  serialControlBegin(Serial, 115200);
+
 
   // WiFi
   WiFi.mode(WIFI_STA);
@@ -60,57 +63,54 @@ void setup() {
 
 void loop() {
   webserver_loop();
+  serialControlLoop();                 // <- correr SIEMPRE, al inicio o al final pero sin returns previos
 
-  if (!rfid.PICC_IsNewCardPresent()) return;
-  if (!rfid.PICC_ReadCardSerial())   return;
+  // Lectura RFID no bloqueante
+  if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+    String uid = uidToHex(rfid.uid);
+    Serial.print("Detectada UID: "); Serial.println(uid);
+    serialOnCardScanned(uid);
+    beep(60);
 
-  String uid = uidToHex(rfid.uid);
-  Serial.print("Detectada UID: "); Serial.println(uid);
-  beep(60);
+    if (isEnrollArmed()) {
+      if (CardStore::exists(uid)) {
+        setLastEvent("Ya existia: " + uid + " (" + CardStore::getName(uid) + ")");
+        digitalWrite(LED_ROJO, HIGH); delay(250); digitalWrite(LED_ROJO, LOW);
+      } else {
+        String nombre = armedName();
+        CardStore::add(uid, nombre);
+        setLastEvent("Enrolada: " + uid + " -> " + nombre);
+        digitalWrite(LED_VERDE, HIGH); delay(600); digitalWrite(LED_VERDE, LOW);
+      }
+      // Consumir armado para que no repita
+      armEnroll(false);
+    }
+    else if (isDeleteArmed()) {
+      if (CardStore::remove(uid)) {
+        setLastEvent("Baja OK: " + uid);
+        digitalWrite(LED_ROJO, HIGH); delay(250); digitalWrite(LED_ROJO, LOW);
+      } else {
+        setLastEvent("UID no existe: " + uid);
+        for (int i=0;i<2;i++){ digitalWrite(LED_ROJO, HIGH); delay(80); digitalWrite(LED_ROJO, LOW); delay(80); }
+      }
+      // Consumir armado
+      armDelete(false);
+    }
+    else {
+      String name = CardStore::getName(uid);
+      if (name.length()) {
+        setLastEvent("Valida: " + uid + " (" + name + ")");
+        digitalWrite(LED_VERDE, HIGH); delay(300); digitalWrite(LED_VERDE, LOW);
+      } else {
+        setLastEvent("No registrada: " + uid);
+        digitalWrite(LED_ROJO, HIGH); delay(200); digitalWrite(LED_ROJO, LOW);
+      }
+    }
 
-  if (isEnrollArmed()) {
-    if (CardStore::exists(uid)) {
-      setLastEvent("Ya existía: " + uid + " (" + CardStore::getName(uid) + ")");
-      // feedback: rojo
-      digitalWrite(LED_ROJO, HIGH); delay(250); digitalWrite(LED_ROJO, LOW);
-    } else {
-      String nombre = armedName();
-      CardStore::add(uid, nombre);
-      setLastEvent("Enrolada: " + uid + " -> " + nombre);
-      // feedback: verde
-      digitalWrite(LED_VERDE, HIGH); delay(600); digitalWrite(LED_VERDE, LOW);
-    }
-    // desarmar
-    // (esto “consume” la operación: solo una tarjeta)
-    extern bool isEnrollArmed(); // ya declaradas
-    extern bool isDeleteArmed();
-    // forzamos flags a false tocando los estáticos vía setters si quisieras; como son internos, agreguemos:
-    // acá hacemos un truco: rearmamos desde web con botón si querés más
-    // Para simplificar, reusamos setLastEvent y confiamos en UI (no necesitamos set flags aquí).
-  } else if (isDeleteArmed()) {
-    if (CardStore::remove(uid)) {
-      setLastEvent("Baja OK: " + uid);
-      digitalWrite(LED_ROJO, HIGH); delay(250); digitalWrite(LED_ROJO, LOW);
-    } else {
-      setLastEvent("UID no existe: " + uid);
-      digitalWrite(LED_ROJO, HIGH); delay(80); digitalWrite(LED_ROJO, LOW);
-      delay(80);
-      digitalWrite(LED_ROJO, HIGH); delay(80); digitalWrite(LED_ROJO, LOW);
-    }
-    // igual comentario que arriba respecto a “consumir” la operación
-  } else {
-    // solo lectura informativa (sin operación armada)
-    String name = CardStore::getName(uid);
-    if (name.length()) {
-      setLastEvent("Válida: " + uid + " (" + name + ")");
-      digitalWrite(LED_VERDE, HIGH); delay(300); digitalWrite(LED_VERDE, LOW);
-    } else {
-      setLastEvent("No registrada: " + uid);
-      digitalWrite(LED_ROJO, HIGH); delay(200); digitalWrite(LED_ROJO, LOW);
-    }
+    rfid.PICC_HaltA();
+    rfid.PCD_StopCrypto1();
   }
 
-  rfid.PICC_HaltA();
-  rfid.PCD_StopCrypto1();
-  delay(200);
+  // Pequeño respiro (no bloqueante largo)
+  delay(5);
 }
