@@ -1,19 +1,17 @@
-#ifndef MY_WEBSERVER_H
-#define MY_WEBSERVER_H
-
+#pragma once
 #include <Arduino.h>
-#include <WiFi.h>
 
-// Forward declare WebServer (don't include library header here)
-class WebServer;
-extern WebServer server;
+void webserver_begin();
+void webserver_loop();
 
-void setupWebServer();
-void handleClient();
+// Estado de “armado” para la próxima tarjeta
+bool isEnrollArmed();
+bool isDeleteArmed();
+String armedName();
 
-void handleRoot();
-void handleEnroll();
-void handleListCards();
-void checkCardStatus(const String& uid);
+// Setters (consumo automático o manual)
+void armEnroll(bool on, const String& name = "");
+void armDelete(bool on);
 
-#endif // MY_WEBSERVER_H
+// Mensaje de último evento (se muestra en la UI)
+void setLastEvent(const String& msg);
